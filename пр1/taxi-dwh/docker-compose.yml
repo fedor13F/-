@@ -1,0 +1,89 @@
+version: '3.8'
+
+services:
+  postgres_oltp:
+    image: postgres:16
+    container_name: taxi_postgres
+    environment:
+      POSTGRES_DB: ${PG_DB}
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+    ports:
+      - "${PG_PORT}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./oltp:/docker-entrypoint-initdb.d   # сюда положим SQL — они выполнятся при первом запуске
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_USER} -d ${PG_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    container_name: taxi_clickhouse
+    environment:
+      CLICKHOUSE_DB: ${CH_DB}
+      CLICKHOUSE_USER: ${CH_USER}
+      CLICKHOUSE_PASSWORD: ${CH_PASS}
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "8123:8123"   # HTTP-интерфейс
+      - "9000:9000"   # native-интерфейс
+    volumes:
+      - ch_data:/var/lib/clickhouse
+      - ./dwh:/docker-entrypoint-initdb.d   # SQL выполнится при первом запуске
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8123/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  superset_db:
+    image: postgres:16
+    container_name: taxi_superset_db
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: superset
+    volumes:
+      - superset_db_data:/var/lib/postgresql/data
+
+  superset_redis:
+    image: redis:7
+    container_name: taxi_superset_redis
+
+  superset:
+    image: apache/superset:3.1.0
+    container_name: taxi_superset
+    depends_on:
+      - superset_db
+      - superset_redis
+      - clickhouse
+    environment:
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+      SQLALCHEMY_DATABASE_URI: postgresql+psycopg2://superset:superset@superset_db:5432/superset
+      REDIS_HOST: superset_redis
+      SUPERSET_ADMIN_USER: ${SUPERSET_ADMIN_USER:-admin}
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+    ports:
+      - "8088:8088"
+    volumes:
+      - ./superset:/app/superset_home
+    command: >
+      /bin/sh -c "
+      pip install --no-cache-dir clickhouse-connect==0.7.19 psycopg2-binary &&
+      superset db upgrade &&
+      superset fab create-admin --username $${SUPERSET_ADMIN_USER} --firstname Admin --lastname User --email admin@example.com --password $${SUPERSET_ADMIN_PASSWORD} || true;
+      superset init &&
+      superset run -h 0.0.0.0 -p 8088
+      "
+
+volumes:
+  pg_data:
+  ch_data:
+  superset_db_data:
