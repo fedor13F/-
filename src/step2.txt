@@ -1,0 +1,4 @@
+admin	GET /big_image.png	9670759
+User9	GET /index.html	275862
+User1	GET /big_image.png	275437
+User6	GET /index.html	274997
